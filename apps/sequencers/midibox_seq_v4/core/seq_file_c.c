@@ -321,6 +321,10 @@ s32 SEQ_FILE_C_Read(char *session)
 	    s32 value = get_dec_range(word, parameter, 0, 1);
 	    if( value >= 0 )
 	      seq_core_options.RATOPC = value;
+	  } else if( strcmp(parameter, "StepFollowNoteDuration") == 0 ) {
+	    s32 value = get_dec_range(word, parameter, 0, 1);
+	    if( value >= 0 )
+	      seq_core_options.STEP_FOLLOW_NOTE_DURATION = value;
 	  } else if( strcmp(parameter, "StepsPerMeasure") == 0 ) {
 	    s32 value = get_dec_range(word, parameter, 0, 256);
 	    if( value >= 0 )
@@ -359,6 +363,33 @@ s32 SEQ_FILE_C_Read(char *session)
 	    s32 value = get_dec_range(word, parameter, 0, 100);
 	    if( value >= 0 )
 	      seq_record_quantize = value;
+	  } else if( strcmp(parameter, "RecQuantizeMode") == 0 ) {
+	    s32 value = get_dec_range(word, parameter, 0, 1);
+	    if( value >= 0 ) {
+	      int track;
+	      for(track=0; track<SEQ_CORE_NUM_TRACKS; ++track)
+		SEQ_RECORD_QuantizeModeSet(track, (seq_record_quantize_mode_t)value);
+	    }
+	  } else if( strncmp(parameter, "RecQuantizeModeT", 16) == 0 ) {
+	    int track;
+	    for(track=0; track<SEQ_CORE_NUM_TRACKS; ++track) {
+	      char track_parameter[24];
+	      sprintf(track_parameter, "RecQuantizeModeT%02d", track+1);
+	      if( strcmp(parameter, track_parameter) == 0 ) {
+		s32 mode = get_dec_range(word, parameter, 0, 1);
+		char *user_set_word = strtok_r(NULL, separators, &brkt);
+		s32 user_set = get_dec_range(user_set_word, parameter, 0, 1);
+		if( mode >= 0 && user_set >= 0 ) {
+		  SEQ_RECORD_QuantizeModeSet(track, (seq_record_quantize_mode_t)mode);
+		  SEQ_RECORD_QuantizeModeUserSetSet(track, user_set);
+		}
+		break;
+	      }
+	    }
+	  } else if( strcmp(parameter, "RecGrid") == 0 ) {
+	    s32 value = get_dec_range(word, parameter, 0, 7);
+	    if( value >= 0 )
+	      seq_record_grid = value;
 	  } else if( strcmp(parameter, "RecStepInc") == 0 ) {
 	    s32 value = get_dec_range(word, parameter, 0, 255);
 	    if( value >= 0 )
@@ -992,6 +1023,9 @@ static s32 SEQ_FILE_C_Write_Hlp(u8 write_to_file)
   sprintf(line_buffer, "RATOPC %d\n", seq_core_options.RATOPC);
   FLUSH_BUFFER;
 
+  sprintf(line_buffer, "StepFollowNoteDuration %d\n", seq_core_options.STEP_FOLLOW_NOTE_DURATION);
+  FLUSH_BUFFER;
+
   sprintf(line_buffer, "StepsPerMeasure %d\n", seq_core_steps_per_measure);
   FLUSH_BUFFER;
 
@@ -1017,6 +1051,25 @@ static s32 SEQ_FILE_C_Write_Hlp(u8 write_to_file)
   FLUSH_BUFFER;
 
   sprintf(line_buffer, "RecQuantisation %d\n", (u8)seq_record_quantize);
+  FLUSH_BUFFER;
+
+  // Keep the legacy key at Boundary for older firmware; newer versions use
+  // the per-track keys below.
+  sprintf(line_buffer, "RecQuantizeMode %d\n", (u8)SEQ_RECORD_QUANTIZE_MODE_Boundary);
+
+  FLUSH_BUFFER;
+
+  {
+    int track;
+    for(track=0; track<SEQ_CORE_NUM_TRACKS; ++track) {
+      sprintf(line_buffer, "RecQuantizeModeT%02d %d %d\n",
+	      track+1, (u8)SEQ_RECORD_QuantizeModeGet(track),
+	      SEQ_RECORD_QuantizeModeUserSetGet(track));
+      FLUSH_BUFFER;
+    }
+  }
+
+  sprintf(line_buffer, "RecGrid %d\n", (u8)seq_record_grid);
   FLUSH_BUFFER;
 
   sprintf(line_buffer, "RecStepInc %d\n", (u8)seq_record_options.STEPS_PER_KEY);
@@ -1298,4 +1351,3 @@ s32 SEQ_FILE_C_Debug(void)
 {
   return SEQ_FILE_C_Write_Hlp(0); // send to debug terminal
 }
-

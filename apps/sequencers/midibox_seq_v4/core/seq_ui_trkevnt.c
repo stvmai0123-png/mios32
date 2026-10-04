@@ -30,6 +30,7 @@
 #include "seq_label.h"
 #include "seq_cc_labels.h"
 #include "seq_midi_in.h"
+#include "seq_record.h"
 
 #include "file.h"
 #include "seq_file.h"
@@ -533,8 +534,14 @@ static s32 Encoder_Handler(seq_ui_encoder_t encoder, s32 incrementer)
 		SEQ_UI_Msg(SEQ_UI_MSG_USER, 2000, "Please confirm new type", "with GP button!");
 	      } else {
 		if( edit_layer_type != SEQ_CC_Get(visible_track, SEQ_CC_LAY_CONST_A1 + ui_selected_par_layer) ) {
+		  u8 previous_layer_type = SEQ_CC_Get(visible_track, SEQ_CC_LAY_CONST_A1 + ui_selected_par_layer);
 		  SEQ_CC_Set(visible_track, SEQ_CC_LAY_CONST_A1 + ui_selected_par_layer, edit_layer_type);
 		  SEQ_LAYER_CopyParLayerPreset(visible_track, ui_selected_par_layer);
+		  if( edit_layer_type == SEQ_PAR_Type_Delay &&
+		      previous_layer_type != SEQ_PAR_Type_Delay ) {
+		    SEQ_RECORD_DelayLayerEnabled(visible_track);
+		    ui_store_file_required = 1;
+		  }
 		  SEQ_UI_Msg(SEQ_UI_MSG_USER, 2000, "Layer Type", "has been changed.");
 		} else {
 		  // send MIDI event

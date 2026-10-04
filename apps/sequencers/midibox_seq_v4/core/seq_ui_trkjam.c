@@ -59,37 +59,40 @@
 #define ITEM_LIVE_POLY_MODE     8
 #define ITEM_LIVE_AUTO_START    9
 #define ITEM_LIVE_QUANTIZE     10
+#define ITEM_LIVE_QMODE        11
 
 #define FIRST_ITEM_LIVE ITEM_LIVE_POLY_MODE
-#define LAST_ITEM_LIVE ITEM_LIVE_QUANTIZE
+#define LAST_ITEM_LIVE ITEM_LIVE_QMODE
 
-#define ITEM_PTN_POLY_OR_DRUM  11
-#define ITEM_PTN_ENABLE        12
-#define ITEM_PTN_PATTERN       13
-#define ITEM_PTN_LENGTH        14
+#define ITEM_PTN_POLY_OR_DRUM  12
+#define ITEM_PTN_ENABLE        13
+#define ITEM_PTN_PATTERN       14
+#define ITEM_PTN_LENGTH        15
 
 #define FIRST_ITEM_PTN ITEM_PTN_POLY_OR_DRUM
 #define LAST_ITEM_PTN ITEM_PTN_LENGTH
 
-#define ITEM_MIDI_IN_BUS       15
-#define ITEM_MIDI_IN_PORT      16
-#define ITEM_MIDI_IN_CHN       17
-#define ITEM_MIDI_IN_LOWER     18
-#define ITEM_MIDI_IN_UPPER     19
-#define ITEM_MIDI_IN_MODE      20
-#define ITEM_MIDI_RESET_STACKS 21
+#define ITEM_MIDI_IN_BUS       16
+#define ITEM_MIDI_IN_PORT      17
+#define ITEM_MIDI_IN_CHN       18
+#define ITEM_MIDI_IN_LOWER     19
+#define ITEM_MIDI_IN_UPPER     20
+#define ITEM_MIDI_IN_MODE      21
+#define ITEM_MIDI_RESET_STACKS 22
 
 #define FIRST_ITEM_MIDI ITEM_MIDI_IN_BUS
 #define LAST_ITEM_MIDI ITEM_MIDI_RESET_STACKS
 
-#define ITEM_MISC_OCT_TRANSPOSE 22
-#define ITEM_MISC_FX_ENABLE     23
-#define ITEM_MISC_FTS           24
+#define ITEM_MISC_OCT_TRANSPOSE 23
+#define ITEM_MISC_FX_ENABLE     24
+#define ITEM_MISC_FTS           25
 
 #define FIRST_ITEM_MISC ITEM_MISC_OCT_TRANSPOSE
 #define LAST_ITEM_MISC ITEM_MISC_FTS
 
-#define NUM_OF_ITEMS           25
+#define NUM_OF_ITEMS           26
+
+static const u8 live_grid_positions[8] = { 96, 48, 24, 12, 6, 3, 2, 1 };
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -154,6 +157,7 @@ static s32 LED_Handler(u16 *gp_leds)
     case ITEM_LIVE_POLY_MODE: *gp_leds |= 0x0100; break;
     case ITEM_LIVE_AUTO_START: *gp_leds |= 0x0200; break;
     case ITEM_LIVE_QUANTIZE: *gp_leds |= 0x0c00; break;
+    case ITEM_LIVE_QMODE: *gp_leds |= 0x1000; break;
     }
     break;
 
@@ -394,6 +398,9 @@ static s32 Encoder_Handler(seq_ui_encoder_t encoder, s32 incrementer)
 	break;
 
       case SEQ_UI_ENCODER_GP13:
+	ui_selected_item = ITEM_LIVE_QMODE;
+	break;
+
       case SEQ_UI_ENCODER_GP14:
       case SEQ_UI_ENCODER_GP15:
       case SEQ_UI_ENCODER_GP16:
@@ -634,11 +641,41 @@ static s32 Encoder_Handler(seq_ui_encoder_t encoder, s32 incrementer)
   }
 
   case ITEM_LIVE_QUANTIZE: {
-    if( SEQ_UI_Var8_Inc(&seq_record_quantize, 0, 99, incrementer) >= 0 ) {
+    s32 status;
+    if( SEQ_RECORD_QuantizeModeGet(SEQ_UI_VisibleTrackGet()) == SEQ_RECORD_QUANTIZE_MODE_Grid )
+      status = SEQ_UI_Var8_Inc(&seq_record_grid, 0, 7, incrementer);
+    else
+      status = SEQ_UI_Var8_Inc(&seq_record_quantize, 0, 99, incrementer);
+    if( status >= 0 ) {
       ui_store_file_required = 1;
       return 1; // value changed
     }
     return 0; // no change
+  }
+
+  case ITEM_LIVE_QMODE: {
+    u8 visible_track = SEQ_UI_VisibleTrackGet();
+    seq_record_quantize_mode_t new_mode;
+    if( incrementer )
+      new_mode = incrementer > 0 ? SEQ_RECORD_QUANTIZE_MODE_Grid : SEQ_RECORD_QUANTIZE_MODE_Boundary;
+    else
+      new_mode = SEQ_RECORD_QuantizeModeGet(visible_track) == SEQ_RECORD_QUANTIZE_MODE_Grid ?
+	SEQ_RECORD_QUANTIZE_MODE_Boundary : SEQ_RECORD_QUANTIZE_MODE_Grid;
+
+    if( new_mode == SEQ_RECORD_QUANTIZE_MODE_Grid &&
+	seq_cc_trk[visible_track].link_par_layer_delay < 0 ) {
+      SEQ_UI_Msg(SEQ_UI_MSG_USER_R, 2000, "Grid Quantize", "requires Delay layer");
+      return 1;
+    }
+
+    if( new_mode != SEQ_RECORD_QuantizeModeGet(visible_track) ) {
+      SEQ_RECORD_QuantizeModeSet(visible_track, new_mode);
+      SEQ_RECORD_QuantizeModeUserSetSet(visible_track, 1);
+      SEQ_RECORD_Reset(visible_track);
+      ui_store_file_required = 1;
+      return 1;
+    }
+    return 0;
   }
 
   case ITEM_PTN_ENABLE: {
@@ -846,8 +883,8 @@ static s32 LCD_Handler(u8 high_prio)
   // 00000000001111111111222222222233333333330000000000111111111122222222223333333333
   // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
   // <--------------------------------------><-------------------------------------->
-  // Trk. Rec. Fwd.    Configuration Pages   Mode AStart Quantize                    
-  // G1T1 off   on  Step>Live<Ptn. MIDI Misc Poly  on       10%                      
+  // Trk. Rec. Fwd.    Configuration Pages   Mode AStart Quantize QMode               
+  // G1T1 off   on  Step>Live<Ptn. MIDI Misc Poly  on       10%   Boundary            
 
   // 00000000001111111111222222222233333333330000000000111111111122222222223333333333
   // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
@@ -1013,8 +1050,36 @@ static s32 LCD_Handler(u8 high_prio)
 
   ///////////////////////////////////////////////////////////////////////////
   case SUBPAGE_REC_LIVE: {
+    u8 visible_track = SEQ_UI_VisibleTrackGet();
+    seq_record_quantize_mode_t quantize_mode = SEQ_RECORD_QuantizeModeGet(visible_track);
+
     SEQ_LCD_CursorSet(40, 0);
-    SEQ_LCD_PrintString("Mode AStart Quantize                    ");
+    SEQ_LCD_PrintString("Mode AStart Quantize");
+    SEQ_LCD_CursorSet(60, 0);
+    SEQ_LCD_PrintSpaces(4);
+    SEQ_LCD_CursorSet(64, 0);
+    SEQ_LCD_PrintString("QMode");
+    SEQ_LCD_CursorSet(69, 0);
+    SEQ_LCD_PrintChar(' ');
+
+    seq_cc_trk_t *tcc = &seq_cc_trk[visible_track];
+    const char *record_warning = "";
+    if( quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid ) {
+      if( tcc->link_par_layer_delay < 0 )
+	record_warning = "SET DELAY!";
+      else if( tcc->event_mode != SEQ_EVENT_MODE_Drum &&
+	       tcc->event_mode != SEQ_EVENT_MODE_Combined &&
+	       tcc->link_par_layer_length < 0 )
+	record_warning = "SET LENGTH!";
+    }
+    SEQ_LCD_CursorSet(70, 0);
+    if( ui_cursor_flash && record_warning[0] )
+      SEQ_LCD_PrintSpaces(10);
+    else {
+      SEQ_LCD_PrintString(record_warning);
+      SEQ_LCD_PrintSpaces(record_warning[0] ?
+			  (record_warning[4] == 'L' ? 0 : 1) : 10);
+    }
 
     ///////////////////////////////////////////////////////////////////////////
     SEQ_LCD_CursorSet(40, 1);
@@ -1037,10 +1102,22 @@ static s32 LCD_Handler(u8 high_prio)
     ///////////////////////////////////////////////////////////////////////
     if( ui_selected_item == ITEM_LIVE_QUANTIZE && ui_cursor_flash ) {
       SEQ_LCD_PrintSpaces(4);
+    } else if( quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid ) {
+      u8 grid = seq_record_grid > 7 ? 7 : seq_record_grid;
+      SEQ_LCD_PrintFormattedString("%3d ", live_grid_positions[grid]);
     } else {
       SEQ_LCD_PrintFormattedString("%3d%%", seq_record_quantize);
     }
-    SEQ_LCD_PrintSpaces(22);
+    SEQ_LCD_PrintSpaces(6);
+    if( ui_selected_item == ITEM_LIVE_QMODE && ui_cursor_flash )
+      SEQ_LCD_PrintSpaces(8);
+    else if( quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid ) {
+      SEQ_LCD_PrintString("Grid");
+      SEQ_LCD_PrintSpaces(4);
+    } else {
+      SEQ_LCD_PrintString("Boundary");
+    }
+    SEQ_LCD_PrintSpaces(8);
   } break;
 
   ///////////////////////////////////////////////////////////////////////////

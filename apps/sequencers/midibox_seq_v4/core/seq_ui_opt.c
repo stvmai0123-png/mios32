@@ -75,8 +75,9 @@
 #define ITEM_MIXER_CC1234                 31
 #define ITEM_MENU_SHORTCUTS               32
 #define ITEM_SCREEN_SAVER                 33
+#define ITEM_STEP_FOLLOW_NOTE_DURATION    34
 
-#define NUM_OF_ITEMS                      34
+#define NUM_OF_ITEMS                      35
 
 
 static const char *item_text[NUM_OF_ITEMS][2] = {
@@ -249,6 +250,11 @@ static const char *item_text[NUM_OF_ITEMS][2] = {
   {//<-------------------------------------->
     "Screen Saver:",
     ""
+  },
+
+  {//<-------------------------------------->
+    "Step Follow LED follows note duration",
+    NULL,
   },
 };
 
@@ -855,6 +861,15 @@ static s32 Encoder_Handler(seq_ui_encoder_t encoder, s32 incrementer)
       return 1;
     } break;
 
+    case ITEM_STEP_FOLLOW_NOTE_DURATION: {
+      if( incrementer )
+	seq_core_options.STEP_FOLLOW_NOTE_DURATION = incrementer > 0 ? 1 : 0;
+      else
+	seq_core_options.STEP_FOLLOW_NOTE_DURATION ^= 1;
+      ui_store_file_required = 1;
+      return 1;
+    } break;
+
   }
 
   return -1; // invalid or unsupported encoder
@@ -1407,6 +1422,11 @@ static s32 LCD_Handler(u8 high_prio)
       SEQ_LCD_PrintString(" minutes");
       SEQ_LCD_PrintSpaces(40-6-delay_len-8);
     }
+  } break;
+
+  ///////////////////////////////////////////////////////////////////////////
+  case ITEM_STEP_FOLLOW_NOTE_DURATION: {
+    enabled_value = seq_core_options.STEP_FOLLOW_NOTE_DURATION;
   } break;
 
   ///////////////////////////////////////////////////////////////////////////

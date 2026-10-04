@@ -167,6 +167,23 @@ static u16 ui_delayed_action_ctr;
 static u8 seq_ui_track_setup_visible_track;
 static seq_ui_track_setup_t seq_ui_track_setup[SEQ_CORE_NUM_TRACKS];
 
+static s32 SEQ_UI_PlayedStepGet(u8 track, u32 bpm_tick, u8 sequencer_running)
+{
+  if( !sequencer_running )
+    return -1;
+
+  seq_core_trk_t *t = &seq_core_trk[track];
+  if( seq_core_options.STEP_FOLLOW_NOTE_DURATION &&
+      seq_hwcfg_blm8x8.dout_gp_mapping == 3 ) {
+    if( (s32)(bpm_tick - t->led_gate_start_tick) < 0 ||
+        (s32)(t->led_gate_end_tick - bpm_tick) <= 0 )
+      return -1;
+    return t->led_gate_step;
+  }
+
+  return t->step;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Prototypes
@@ -3474,7 +3491,23 @@ s32 SEQ_UI_LED_Handler_Periodic()
 
   // GP LEDs are updated when ui_gp_leds has changed
   static u16 prev_ui_gp_leds = 0x0000;
+  static u8 prev_gate_marker_active;
   u8 sequencer_running = SEQ_BPM_IsRunning();
+
+  u8 gate_marker_active = 0;
+  u32 bpm_tick = SEQ_BPM_TickGet();
+  if( sequencer_running && seq_core_options.STEP_FOLLOW_NOTE_DURATION &&
+      seq_hwcfg_blm8x8.dout_gp_mapping == 3 ) {
+    int track;
+    for(track=0; track<SEQ_CORE_NUM_TRACKS; ++track) {
+      if( SEQ_UI_PlayedStepGet(track, bpm_tick, sequencer_running) >= 0 ) {
+        gate_marker_active = 1;
+        break;
+      }
+    }
+  }
+  u8 gate_marker_changed = gate_marker_active != prev_gate_marker_active;
+  prev_gate_marker_active = gate_marker_active;
 
   // beat LED
   u8 beat_led_on = sequencer_running && ((seq_core_state.ref_step % 4) == 0);
@@ -3512,7 +3545,9 @@ s32 SEQ_UI_LED_Handler_Periodic()
 #endif
 
   // don't continue if no new step has been generated and GP LEDs haven't changed
-  if( !seq_core_step_update_req && prev_ui_gp_leds == ui_gp_leds && sequencer_running ) // sequencer running check: workaround - as long as sequencer not running, we won't get an step update request!
+  if( !seq_core_step_update_req && prev_ui_gp_leds == ui_gp_leds && sequencer_running &&
+      (!seq_core_options.STEP_FOLLOW_NOTE_DURATION ||
+       (!gate_marker_active && !gate_marker_changed)) ) // sequencer running check: workaround - as long as sequencer not running, we won't get an step update request!
     return 0;
   seq_core_step_update_req = 0; // requested from SEQ_CORE if any step has been changed
   prev_ui_gp_leds = ui_gp_leds; // take over new GP pattern
@@ -3520,15 +3555,14 @@ s32 SEQ_UI_LED_Handler_Periodic()
   // for song position marker (supports 16 LEDs, check for selected step view)
   u16 pos_marker_mask = 0x0000;
   u8 visible_track = SEQ_UI_VisibleTrackGet();
-  u8 played_step = seq_core_trk[visible_track].step;
+  s32 played_step = SEQ_UI_PlayedStepGet(visible_track, bpm_tick, sequencer_running);
 
-  if( seq_core_slaveclk_mute != SEQ_CORE_SLAVECLK_MUTE_Enabled ) { // Off and OffOnNextMeasure
+  if( played_step >= 0 && seq_core_slaveclk_mute != SEQ_CORE_SLAVECLK_MUTE_Enabled ) { // Off and OffOnNextMeasure
     if( ui_page == SEQ_UI_PAGE_STEPSEL ) {
       // in STEPSEL page: pos marker correlated to zoom ratio
-      if( sequencer_running )
-	pos_marker_mask = 1 << (played_step / (SEQ_TRG_NumStepsGet(visible_track)/16));
+      pos_marker_mask = 1 << (played_step / (SEQ_TRG_NumStepsGet(visible_track)/16));
     } else {
-      if( sequencer_running && (played_step >> 4) == ui_selected_step_view )
+      if( (played_step >> 4) == ui_selected_step_view )
 	pos_marker_mask = 1 << (played_step & 0xf);
     }
   }
@@ -3579,8 +3613,8 @@ s32 SEQ_UI_LED_Handler_Periodic()
 
       // determine position marker
       u16 pos_marker_mask = 0x0000;
-      if( sequencer_running ) {
-	u8 played_step = seq_core_trk[track].step;
+      s32 played_step = SEQ_UI_PlayedStepGet(track, bpm_tick, sequencer_running);
+      if( played_step >= 0 ) {
 	if( (played_step >> 4) == ui_selected_step_view )
 	  pos_marker_mask = 1 << (played_step & 0xf);
       }

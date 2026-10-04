@@ -23,6 +23,7 @@
 #include "tasks.h"
 
 #include "seq_core.h"
+#include "seq_hwcfg.h"
 #include "seq_song.h"
 #include "seq_random.h"
 #include "seq_cc.h"
@@ -59,6 +60,8 @@
 // (LED toggling in APP_Background() has to be disabled!)
 // set this to 2 to visualize forward delay during pattern changes
 #define LED_PERFORMANCE_MEASURING 0
+
+#define SEQ_CORE_GATE_LED_MIN_MS 50
 
 // same for measuring with the stopwatch
 // value is visible in menu (-> press exit button)
@@ -399,6 +402,32 @@ s32 SEQ_CORE_ScheduleEvent(u8 track, seq_core_trk_t *t, seq_cc_trk_t *tcc, mios3
 	shadow_package.velocity = 0;
 	status |= SEQ_MIDI_OUT_Send(seq_core_shadow_out_port, shadow_package, SEQ_MIDI_OUT_OffEvent, 0xffffffff, 0);
       }
+    }
+  }
+
+  if( seq_core_options.STEP_FOLLOW_NOTE_DURATION &&
+      seq_hwcfg_blm8x8.dout_gp_mapping == 3 && !is_echo &&
+      (event_type == SEQ_MIDI_OUT_OnOffEvent || event_type == SEQ_MIDI_OUT_OnEvent) &&
+      midi_package.type == NoteOn && timestamp != 0xffffffff ) {
+    u32 display_gate_len = event_type == SEQ_MIDI_OUT_OnEvent ? t->step_length : len;
+    u32 min_gate_len = SEQ_BPM_TicksFor_mS(SEQ_CORE_GATE_LED_MIN_MS);
+    if( display_gate_len < min_gate_len ) {
+      display_gate_len = min_gate_len;
+      if( t->step_length && display_gate_len > t->step_length )
+        display_gate_len = t->step_length;
+    }
+
+    if( !t->led_gate_end_tick || t->led_gate_step_ref_tick != t->timestamp_next_step_ref ) {
+      t->led_gate_step_ref_tick = t->timestamp_next_step_ref;
+      t->led_gate_step = t->step;
+      t->led_gate_start_tick = timestamp;
+      t->led_gate_end_tick = timestamp + display_gate_len;
+    } else {
+      if( (s32)(timestamp - t->led_gate_start_tick) < 0 )
+        t->led_gate_start_tick = timestamp;
+      u32 gate_end_tick = timestamp + display_gate_len;
+      if( (s32)(gate_end_tick - t->led_gate_end_tick) > 0 )
+        t->led_gate_end_tick = gate_end_tick;
     }
   }
 
@@ -1610,6 +1639,11 @@ static s32 SEQ_CORE_ResetTrkPos(u8 track, seq_core_trk_t *t, seq_cc_trk_t *tcc)
 {
   // synch to measure done
   t->state.SYNC_MEASURE = 0;
+
+  t->led_gate_start_tick = 0;
+  t->led_gate_end_tick = 0;
+  t->led_gate_step_ref_tick = 0;
+  t->led_gate_step = 0;
 
   // don't increment on first clock event
   t->state.FIRST_CLK = 1;

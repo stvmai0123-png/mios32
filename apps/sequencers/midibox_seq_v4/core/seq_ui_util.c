@@ -26,6 +26,7 @@
 #include "seq_trg.h"
 #include "seq_cc.h"
 #include "seq_live.h"
+#include "seq_record.h"
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -656,6 +657,7 @@ static s32 PASTE_Track(u8 track, paste_clear_mode_t paste_clear_mode)
   switch( paste_clear_mode ) {
   case PASTE_CLEAR_MODE_TRACK: {
     //seq_event_mode_t prev_event_mode = SEQ_CC_Get(track, SEQ_CC_MIDI_EVENT_MODE);
+    s8 previous_delay_layer = seq_cc_trk[track].link_par_layer_delay;
 
     // take over mode - but only if it has been changed so that new partitioning is required!
     if( SEQ_CC_Get(track, SEQ_CC_MIDI_EVENT_MODE) != copypaste_cc[SEQ_CC_MIDI_EVENT_MODE] ) {
@@ -681,6 +683,11 @@ static s32 PASTE_Track(u8 track, paste_clear_mode_t paste_clear_mode)
       for(i=0; i<4; ++i) {
 	SEQ_CC_Set(track, SEQ_CC_PAR_ASG_DRUM_LAYER_A+i, copypaste_cc[SEQ_CC_PAR_ASG_DRUM_LAYER_A+i]);
       }
+    }
+
+    if( previous_delay_layer < 0 && seq_cc_trk[track].link_par_layer_delay >= 0 ) {
+      SEQ_RECORD_DelayLayerEnabled(track);
+      ui_store_file_required = 1;
     }
 
     // copy layers from buffer
@@ -724,9 +731,14 @@ static s32 PASTE_Track(u8 track, paste_clear_mode_t paste_clear_mode)
     }
 
     // copy parameter type
+    seq_par_layer_type_t previous_type = SEQ_PAR_AssignmentGet(track, ui_selected_par_layer);
     seq_par_layer_type_t par_type = copypaste_cc[SEQ_CC_LAY_CONST_A1 + copypaste_selected_par_layer];
     SEQ_CC_Set(track, SEQ_CC_LAY_CONST_A1 + ui_selected_par_layer, (u8)par_type);
     SEQ_CC_LinkUpdate(track);
+    if( par_type == SEQ_PAR_Type_Delay && previous_type != SEQ_PAR_Type_Delay ) {
+      SEQ_RECORD_DelayLayerEnabled(track);
+      ui_store_file_required = 1;
+    }
 
     // some additional operations depending on parameter type
     if( par_type == SEQ_PAR_Type_Note || par_type == SEQ_PAR_Type_Chord1 || par_type == SEQ_PAR_Type_Chord2 || par_type == SEQ_PAR_Type_Chord3 ) {
@@ -773,9 +785,14 @@ static s32 PASTE_Track(u8 track, paste_clear_mode_t paste_clear_mode)
     }
 
     // copy parameter type
+    seq_par_layer_type_t previous_type = SEQ_PAR_AssignmentGet(track, ui_selected_par_layer);
     seq_par_layer_type_t par_type = copypaste_cc[SEQ_CC_LAY_CONST_A1 + copypaste_selected_par_layer];
     SEQ_CC_Set(track, SEQ_CC_LAY_CONST_A1 + ui_selected_par_layer, (u8)par_type);
     SEQ_CC_LinkUpdate(track);
+    if( par_type == SEQ_PAR_Type_Delay && previous_type != SEQ_PAR_Type_Delay ) {
+      SEQ_RECORD_DelayLayerEnabled(track);
+      ui_store_file_required = 1;
+    }
 
     // trigger layer
     for(layer=0; layer<num_trg_layers && layer<copypaste_trg_layers; ++layer) {

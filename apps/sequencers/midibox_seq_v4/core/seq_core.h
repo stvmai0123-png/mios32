@@ -44,6 +44,7 @@ typedef union {
     u32 MIXER_LIVE_SEND:1;
     u32 INIT_WITH_TRIGGERS:1;
     u32 LIVE_LAYER_MUTE_STEPS:3; // 0=off, 1=permanent, 2..4 steps
+    u32 STEP_FOLLOW_NOTE_DURATION:1;
   };
 } seq_core_options_t;
 
@@ -94,6 +95,10 @@ typedef struct seq_core_trk_t {
   u16                  step_length;      // length of the current step
   u32                  timestamp_next_step; // timestamp at which the next step will be played
   u32                  timestamp_next_step_ref; // timestamp of next step w/o groove delay
+  u32                  led_gate_start_tick;
+  u32                  led_gate_end_tick;
+  u32                  led_gate_step_ref_tick;
+  u8                   led_gate_step;
   u32                  glide_notes[4];   // 128 bit to store notes in glide state
   u16                  bpm_tick_delay;   // delay of current step
   u8                   step_replay_ctr;  // step replay counter

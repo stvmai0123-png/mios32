@@ -48,6 +48,9 @@ seq_record_options_t seq_record_options;
 seq_record_state_t seq_record_state;
 
 u8 seq_record_quantize;
+u8 seq_record_grid;
+static seq_record_quantize_mode_t seq_record_quantize_mode[SEQ_CORE_NUM_TRACKS];
+static u8 seq_record_quantize_mode_user_set[SEQ_CORE_NUM_TRACKS];
 
 // one bit for each note, 32*4 = 128 notes supported (covers all notes of one MIDI channel)
 // also used by seq_core for SEQ_MIDI_OUT_ReSchedule in record mode, therefore global
@@ -62,6 +65,18 @@ u32 seq_record_played_notes[4];
 // notes (deluxe version: separate timestamp for each note!)
 u16 seq_record_note_timestamp_ms[128];
 
+static u8 seq_record_delay_step_valid[SEQ_CORE_NUM_TRACKS];
+static u8 seq_record_delay_step[SEQ_CORE_NUM_TRACKS];
+static u8 seq_record_delay_instrument[SEQ_CORE_NUM_TRACKS];
+static u32 seq_record_delay_step_ref[SEQ_CORE_NUM_TRACKS];
+
+static u8 seq_record_grid_note_active[SEQ_CORE_NUM_TRACKS];
+static u8 seq_record_grid_note[SEQ_CORE_NUM_TRACKS];
+static u8 seq_record_grid_note_layer[SEQ_CORE_NUM_TRACKS];
+static u8 seq_record_grid_note_step[SEQ_CORE_NUM_TRACKS];
+
+static const u8 seq_record_grid_interval[8] = { 1, 2, 4, 8, 16, 32, 48, 96 };
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Initialisation
@@ -73,6 +88,14 @@ s32 SEQ_RECORD_Init(u32 mode)
   seq_record_options.FWD_MIDI = 1;
   seq_record_options.POLY_RECORD = 1;
   seq_record_quantize = 10;
+  seq_record_grid = 0;
+  {
+    int track;
+    for(track=0; track<SEQ_CORE_NUM_TRACKS; ++track) {
+      seq_record_quantize_mode[track] = SEQ_RECORD_QUANTIZE_MODE_Boundary;
+      seq_record_quantize_mode_user_set[track] = 0;
+    }
+  }
 
   seq_record_state.ALL = 0;
 
@@ -92,6 +115,48 @@ s32 SEQ_RECORD_Init(u32 mode)
 }
 
 
+seq_record_quantize_mode_t SEQ_RECORD_QuantizeModeGet(u8 track)
+{
+  if( track >= SEQ_CORE_NUM_TRACKS )
+    return SEQ_RECORD_QUANTIZE_MODE_Boundary;
+  return seq_record_quantize_mode[track];
+}
+
+
+s32 SEQ_RECORD_QuantizeModeSet(u8 track, seq_record_quantize_mode_t mode)
+{
+  if( track >= SEQ_CORE_NUM_TRACKS || mode > SEQ_RECORD_QUANTIZE_MODE_Grid )
+    return -1;
+  seq_record_quantize_mode[track] = mode;
+  return 0;
+}
+
+
+u8 SEQ_RECORD_QuantizeModeUserSetGet(u8 track)
+{
+  return track < SEQ_CORE_NUM_TRACKS ? seq_record_quantize_mode_user_set[track] : 0;
+}
+
+
+s32 SEQ_RECORD_QuantizeModeUserSetSet(u8 track, u8 user_set)
+{
+  if( track >= SEQ_CORE_NUM_TRACKS )
+    return -1;
+  seq_record_quantize_mode_user_set[track] = user_set ? 1 : 0;
+  return 0;
+}
+
+
+s32 SEQ_RECORD_DelayLayerEnabled(u8 track)
+{
+  if( track >= SEQ_CORE_NUM_TRACKS )
+    return -1;
+  if( !seq_record_quantize_mode_user_set[track] )
+    seq_record_quantize_mode[track] = SEQ_RECORD_QUANTIZE_MODE_Grid;
+  return 0;
+}
+
+
 /////////////////////////////////////////////////////////////////////////////
 // called whenever record variables should be reseted (e.g. on track restart)
 /////////////////////////////////////////////////////////////////////////////
@@ -108,6 +173,8 @@ s32 SEQ_RECORD_Reset(u8 track)
   t->state.REC_DONT_OVERWRITE_NEXT_STEP = 0;
   t->rec_timestamp = 0;
   t->rec_poly_ctr = 0;
+  seq_record_delay_step_valid[track] = 0;
+  seq_record_grid_note_active[track] = 0;
   MIOS32_IRQ_Enable();
 
   return 0; // no error
@@ -234,6 +301,54 @@ s32 SEQ_RECORD_PrintEditScreen(void)
   return 0; // no error
 }
 
+/////////////////////////////////////////////////////////////////////////////
+// Stores a live Grid-mode note length in the track's configured length layer.
+/////////////////////////////////////////////////////////////////////////////
+static s32 SEQ_RECORD_GridLengthSet(u8 track, u8 step, u8 note_layer, u8 value)
+{
+  seq_cc_trk_t *tcc = &seq_cc_trk[track];
+
+  if( tcc->event_mode == SEQ_EVENT_MODE_Combined )
+    return SEQ_PAR_Set(track+2, step, note_layer, 0, value);
+
+  if( tcc->link_par_layer_length >= 0 )
+    return SEQ_PAR_Set(track, step, tcc->link_par_layer_length, 0, value);
+
+  return -1;
+}
+
+static u8 SEQ_RECORD_GridLengthValueGet(u32 ticks, u32 step_length)
+{
+  if( !step_length )
+    return 0;
+
+  if( ticks > step_length )
+    ticks = step_length;
+
+  u32 value = (ticks * 96 + step_length - 1) / step_length;
+  if( value )
+    --value;
+  return value > 95 ? 95 : value;
+}
+
+static u8 SEQ_RECORD_GridLengthAvailable(u8 track)
+{
+  seq_cc_trk_t *tcc = &seq_cc_trk[track];
+  return tcc->event_mode == SEQ_EVENT_MODE_Combined || tcc->link_par_layer_length >= 0;
+}
+
+static u32 SEQ_RECORD_GridDelayTicksGet(u8 track, u8 step, u32 step_length)
+{
+  seq_cc_trk_t *tcc = &seq_cc_trk[track];
+  if( tcc->link_par_layer_delay < 0 )
+    return 0;
+
+  u32 delay = SEQ_PAR_Get(track, step, tcc->link_par_layer_delay, 0);
+  if( delay > 95 )
+    delay = 95;
+  return (delay * step_length) / 96;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Called from SEQ_MIDI_IN_Receive() if MIDI event has been received on
@@ -244,6 +359,15 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
   // step recording mode?
   // Note: if sequencer is not running, "Live Recording" will be handled like "Step Recording"
   u8 step_record_mode = seq_record_options.STEP_RECORD || !SEQ_BPM_IsRunning();
+  u32 note_on_tick = 0;
+  u32 recorded_note_on_tick = 0;
+  u32 recorded_step_start_tick = 0;
+  u32 recorded_step_ref_tick = 0;
+  u8 record_delay_pending = 0;
+  u8 record_delay_step = 0;
+  u8 record_delay_instrument = 0;
+  u8 record_delay_value = 0;
+  u8 grid_note_off_recorded = 0;
 
 #if MBSEQV4L
   // extra for MBSEQ V4L: seq_record_state.ARMED_TRACKS and auto-assignment
@@ -376,6 +500,7 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 
   seq_core_trk_t *t = &seq_core_trk[track];
   seq_cc_trk_t *tcc = &seq_cc_trk[track];
+  seq_record_quantize_mode_t quantize_mode = SEQ_RECORD_QuantizeModeGet(track);
 
   // Auto-Start: start with first step
   if( !SEQ_BPM_IsRunning() && seq_record_options.AUTO_START && !seq_record_options.STEP_RECORD ) {
@@ -409,11 +534,39 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 
 	  // insert length into current step
 	  u8 instrument = 0;
-	  int len;
+	  int len = 1;
+	  int len_step = step_record_mode ? ui_selected_step : t->step;
 	  if( step_record_mode ) {
 	    len = 71; // 75%
 	    if( tcc->event_mode != SEQ_EVENT_MODE_Drum )
 	      len = (duration <= 96) ? duration : 96; // for duration >= 96 the length will be stretched after record
+	  } else if( !step_record_mode &&
+		     quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid &&
+		     tcc->event_mode != SEQ_EVENT_MODE_Drum ) {
+	    if( seq_record_grid_note_active[track] &&
+		seq_record_grid_note[track] == midi_package.note ) {
+	      s32 elapsed = (s32)(SEQ_BPM_TickGet() - t->rec_timestamp);
+	      if( elapsed < 1 )
+		len = 1;
+	      else if( elapsed > t->step_length )
+		len = t->step_length;
+	      else
+		len = elapsed;
+	      len_step = seq_record_grid_note_step[track];
+	      if( t->step_length ) {
+		u32 onset_delay = SEQ_RECORD_GridDelayTicksGet(track, len_step, t->step_length);
+		if( onset_delay < t->step_length && len > t->step_length - onset_delay )
+		  len = t->step_length - onset_delay;
+	      }
+	      SEQ_RECORD_GridLengthSet(track, len_step, seq_record_grid_note_layer[track],
+				       SEQ_RECORD_GridLengthValueGet(len, t->step_length));
+	      seq_record_grid_note_active[track] = 0;
+	    }
+	    grid_note_off_recorded = 1;
+	  } else if( !step_record_mode &&
+		     quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid &&
+		     tcc->event_mode == SEQ_EVENT_MODE_Drum ) {
+	    grid_note_off_recorded = 1;
 	  } else {
 	    len = SEQ_BPM_TickGet() - t->rec_timestamp;
 
@@ -423,10 +576,9 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 	      len = 95;
 	  }
 
-	  int len_step = step_record_mode ? ui_selected_step : t->step;
 	  u8 num_p_layers = SEQ_PAR_NumLayersGet(track);
 
-	  while( 1 ) {
+	  while( !grid_note_off_recorded ) {
 	    if( tcc->event_mode == SEQ_EVENT_MODE_Combined ) {
 	      // extra for MBSEQ V4L:
 	      // search for note in track 1/8, insert length into track 3/10
@@ -480,7 +632,9 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 	    send_note_off = 1;     
 	}
       } else {
-	MIOS32_IRQ_Disable();
+  note_on_tick = SEQ_BPM_TickGet();
+  recorded_note_on_tick = note_on_tick;
+  MIOS32_IRQ_Disable();
 
 	if( step_record_mode && tcc->event_mode != SEQ_EVENT_MODE_Drum ) {
 	  // check if another note is already played
@@ -504,7 +658,7 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 	// note is active
 	seq_record_played_notes[midi_package.note>>5] |= note_mask;
 	// start measuring length
-	t->rec_timestamp = SEQ_BPM_TickGet();
+  t->rec_timestamp = note_on_tick;
 	// for step record function: independent from BPM
 	seq_record_note_timestamp_ms[midi_package.note & 0x7f] = MIOS32_TIMESTAMP_Get(); // note: 16bit only
 
@@ -570,28 +724,73 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 
       // take next step if it will be reached "soon" (>80% of current step)
       if( SEQ_BPM_IsRunning() ) {
-	u32 timestamp = SEQ_BPM_TickGet();
-	u8 shift_event = 0;
-	if( t->timestamp_next_step_ref <= timestamp )
-	  shift_event = 1;
-	else {
-	  s32 diff = (s32)t->timestamp_next_step_ref - (s32)timestamp;
-	  u32 tolerance = (t->step_length * seq_record_quantize) / 100; // usually 20% of 96 ticks -> 19 ticks
-	  // TODO: we could vary the tolerance depending on the BPM rate: than slower the clock, than lower the tolerance
-	  // as a simple replacement for constant time measuring
-	  if( diff < tolerance)
+	if( quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Boundary ) {
+	  // Preserve the legacy boundary-quantize behavior.
+	  u32 timestamp = SEQ_BPM_TickGet();
+	  u8 shift_event = 0;
+	  if( t->timestamp_next_step_ref <= timestamp )
 	    shift_event = 1;
-	}
+	  else {
+	    s32 diff = (s32)t->timestamp_next_step_ref - (s32)timestamp;
+	    u32 tolerance = (t->step_length * seq_record_quantize) / 100;
+	    if( diff < tolerance )
+	      shift_event = 1;
+	  }
 
-	if( shift_event ) {
-	  int next_step = ui_selected_step + 1; // tmp. variable used for u8 -> u32 conversion to handle 256 steps properly
-	  if( next_step > tcc->length ) // TODO: handle this correctly if track is played backwards
-	    next_step = tcc->loop;
+	  if( shift_event ) {
+	    int next_step = ui_selected_step + 1;
+	    if( next_step > tcc->length )
+	      next_step = tcc->loop;
 #if DEBUG_VERBOSE_LEVEL >= 2
-	  MIOS32_MIDI_SendDebugMessage("Shifted step %d -> %d\n", ui_selected_step, next_step);
+	    MIOS32_MIDI_SendDebugMessage("Shifted step %d -> %d\n", ui_selected_step, next_step);
 #endif
-	  ui_selected_step = next_step;
-	  t->state.REC_DONT_OVERWRITE_NEXT_STEP = 1; // next step won't be overwritten
+	    ui_selected_step = next_step;
+	    t->state.REC_DONT_OVERWRITE_NEXT_STEP = 1;
+	  }
+	} else if( midi_package.event == NoteOn && midi_package.velocity && t->step_length ) {
+	  u32 timestamp = note_on_tick;
+	  u32 step_length = t->step_length;
+	  recorded_step_start_tick = t->timestamp_next_step_ref - step_length;
+	  recorded_step_ref_tick = t->timestamp_next_step_ref;
+
+	  if( timestamp >= recorded_step_ref_tick ) {
+	    recorded_step_start_tick = recorded_step_ref_tick;
+	    recorded_step_ref_tick += step_length;
+	    if( ++ui_selected_step > tcc->length )
+	      ui_selected_step = tcc->loop;
+	    t->state.REC_DONT_OVERWRITE_NEXT_STEP = 1;
+	  }
+
+	  s32 signed_step_offset = (s32)(timestamp - recorded_step_start_tick);
+	  u32 step_offset = signed_step_offset > 0 ? signed_step_offset : 0;
+	  if( step_offset > step_length )
+	    step_offset = step_length;
+
+	  u8 grid = seq_record_grid > 7 ? 7 : seq_record_grid;
+	  u32 interval = (step_length * seq_record_grid_interval[grid] + 48) / 96;
+	  if( !interval )
+	    interval = 1;
+
+	  // Ties between grid points go to the earlier point.
+	  u32 quantized_offset = ((step_offset * 2 + interval - 1) / (2 * interval)) * interval;
+	  if( quantized_offset >= step_length ) {
+	    quantized_offset = 0;
+	    if( ++ui_selected_step > tcc->length )
+	      ui_selected_step = tcc->loop;
+	    recorded_step_start_tick += step_length;
+	    recorded_step_ref_tick += step_length;
+	    t->state.REC_DONT_OVERWRITE_NEXT_STEP = 1;
+	  }
+
+	  recorded_note_on_tick = recorded_step_start_tick + quantized_offset;
+	  if( tcc->link_par_layer_delay >= 0 ) {
+	    record_delay_pending = 1;
+	    record_delay_step = ui_selected_step;
+	    record_delay_instrument = 0;
+	    record_delay_value = (quantized_offset * 96) / step_length;
+	    if( record_delay_value > 95 )
+	      record_delay_value = 95;
+	  }
 	}
       }
 
@@ -603,9 +802,33 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
     // has been inserted into the (returned) layer.
     // if < 0, no event has been inserted.
     int insert_layer;
-    if( (insert_layer=SEQ_LAYER_RecEvent(track, ui_selected_step, layer_event)) < 0 )
+    if( (insert_layer=SEQ_LAYER_RecEvent(track, ui_selected_step, layer_event)) < 0 ) {
       rec_event = 0;
-    else {
+      record_delay_pending = 0;
+    } else {
+      if( record_delay_pending )
+	record_delay_instrument = tcc->event_mode == SEQ_EVENT_MODE_Drum ? insert_layer : 0;
+
+      if( !step_record_mode && SEQ_RECORD_GridLengthAvailable(track) &&
+	  quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid &&
+	  midi_package.event == NoteOn && tcc->event_mode != SEQ_EVENT_MODE_Drum ) {
+	t->rec_timestamp = recorded_note_on_tick;
+	seq_record_grid_note_active[track] = 1;
+	seq_record_grid_note[track] = midi_package.note;
+	seq_record_grid_note_layer[track] = insert_layer;
+	seq_record_grid_note_step[track] = ui_selected_step;
+      }
+
+      if( record_delay_pending &&
+	  (!seq_record_delay_step_valid[track] ||
+	   seq_record_delay_step[track] != record_delay_step ||
+	   seq_record_delay_instrument[track] != record_delay_instrument ||
+	   seq_record_delay_step_ref[track] != recorded_step_ref_tick) ) {
+	// A step has one Delay value, so retain the first note's timing for polyphonic input.
+      } else {
+	record_delay_pending = 0;
+      }
+
 #ifndef MBSEQV4L
       // change layer on UI
       if( tcc->event_mode == SEQ_EVENT_MODE_Drum ) {
@@ -663,6 +886,15 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
   if( seq_record_options.FWD_MIDI && (!rec_event || !step_record_mode) ) {
     // forward event directly in live mode or if it hasn't been recorded
     SEQ_LIVE_PlayEvent(track, layer_event.midi_package);
+  }
+
+  if( record_delay_pending ) {
+    SEQ_PAR_Set(track, record_delay_step, tcc->link_par_layer_delay,
+		record_delay_instrument, record_delay_value);
+    seq_record_delay_step_valid[track] = 1;
+    seq_record_delay_step[track] = record_delay_step;
+    seq_record_delay_instrument[track] = record_delay_instrument;
+    seq_record_delay_step_ref[track] = recorded_step_ref_tick;
   }
 
   // give MIDI Out/Sequencer semaphore
@@ -723,6 +955,7 @@ s32 SEQ_RECORD_NewStep(u8 track, u8 prev_step, u8 new_step, u32 bpm_tick)
 
   seq_core_trk_t *t = &seq_core_trk[track];
   seq_cc_trk_t *tcc = &seq_cc_trk[track];
+  seq_record_quantize_mode_t quantize_mode = SEQ_RECORD_QuantizeModeGet(track);
 
   // take over new timestamp
   t->rec_timestamp = bpm_tick;
@@ -769,6 +1002,56 @@ s32 SEQ_RECORD_NewStep(u8 track, u8 prev_step, u8 new_step, u32 bpm_tick)
 	}
       }
     } else {
+      if( quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid &&
+	  seq_record_grid_note_active[track] &&
+	  SEQ_RECORD_GridLengthAvailable(track) ) {
+	u8 note_layer = seq_record_grid_note_layer[track];
+	u8 note_step = seq_record_grid_note_step[track];
+	u8 note = seq_record_grid_note[track];
+	u8 wraps_loop = (prev_step == tcc->length && new_step == tcc->loop) ||
+	  (prev_step == tcc->loop && new_step == tcc->length);
+	u8 ends_note = wraps_loop || new_step != (u8)(prev_step + 1);
+
+	if( note_layer >= SEQ_PAR_NumLayersGet(track) ) {
+	  seq_record_grid_note_active[track] = 0;
+	} else {
+	  u32 step_length = t->step_length;
+	  if( ends_note ) {
+	    u32 final_segment_length = step_length;
+	    if( wraps_loop && note_step == prev_step ) {
+		u32 onset_delay = SEQ_RECORD_GridDelayTicksGet(track, prev_step, step_length);
+		final_segment_length = step_length > onset_delay ? step_length - onset_delay : 1;
+	    }
+	    SEQ_RECORD_GridLengthSet(track, prev_step, note_layer,
+				     SEQ_RECORD_GridLengthValueGet(final_segment_length, step_length));
+	    seq_record_grid_note_active[track] = 0;
+	  } else {
+	    SEQ_RECORD_GridLengthSet(track, prev_step, note_layer, 95);
+	    SEQ_PAR_Set(track, new_step, note_layer, 0, note);
+	    SEQ_TRG_GateSet(track, new_step, instrument, 1);
+	    SEQ_TRG_AccentSet(track, new_step, instrument,
+			      SEQ_TRG_AccentGet(track, prev_step, instrument));
+
+	    if( tcc->event_mode == SEQ_EVENT_MODE_Combined ) {
+	      u8 velocity = SEQ_PAR_Get(track+1, prev_step, note_layer, 0);
+	      SEQ_PAR_Set(track+1, new_step, note_layer, 0, velocity);
+	    } else if( tcc->link_par_layer_velocity >= 0 ) {
+	      u8 velocity = SEQ_PAR_Get(track, prev_step, tcc->link_par_layer_velocity, 0);
+	      SEQ_PAR_Set(track, new_step, tcc->link_par_layer_velocity, 0, velocity);
+	    }
+
+	    SEQ_RECORD_GridLengthSet(track, new_step, note_layer, 95);
+	    if( tcc->link_par_layer_delay >= 0 )
+	      SEQ_PAR_Set(track, new_step, tcc->link_par_layer_delay, 0, 0);
+	    seq_record_grid_note_step[track] = new_step;
+	  }
+	}
+
+#ifndef MBSEQV4L
+	ui_selected_step = new_step;
+	ui_selected_step_view = ui_selected_step/16;
+#endif
+      } else {
       u8 gate = 0;
       u8 accent = 0;
       u8 length_prev_step = 95;
@@ -834,6 +1117,7 @@ s32 SEQ_RECORD_NewStep(u8 track, u8 prev_step, u8 new_step, u32 bpm_tick)
 	if( velocity >= 0 && tcc->link_par_layer_velocity >= 0 ) {
 	  SEQ_PAR_Set(track, new_step, tcc->link_par_layer_velocity, instrument, velocity);
 	}
+      }
       }
     }
   }
@@ -911,4 +1195,3 @@ s32 SEQ_RECORD_CtrlCC(u8 track, u8 cc_internal, u8 value)
   
   return 0; // no error
 }
-

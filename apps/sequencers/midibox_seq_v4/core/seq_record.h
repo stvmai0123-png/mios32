@@ -43,6 +43,11 @@ typedef union {
   };
 } seq_record_state_t;
 
+typedef enum {
+  SEQ_RECORD_QUANTIZE_MODE_Boundary,
+  SEQ_RECORD_QUANTIZE_MODE_Grid,
+} seq_record_quantize_mode_t;
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Prototypes
@@ -72,6 +77,12 @@ extern seq_record_options_t seq_record_options;
 extern seq_record_state_t seq_record_state;
 
 extern u8 seq_record_quantize;
+extern u8 seq_record_grid;
+extern seq_record_quantize_mode_t SEQ_RECORD_QuantizeModeGet(u8 track);
+extern s32 SEQ_RECORD_QuantizeModeSet(u8 track, seq_record_quantize_mode_t mode);
+extern u8 SEQ_RECORD_QuantizeModeUserSetGet(u8 track);
+extern s32 SEQ_RECORD_QuantizeModeUserSetSet(u8 track, u8 user_set);
+extern s32 SEQ_RECORD_DelayLayerEnabled(u8 track);
 
 extern u32 seq_record_played_notes[4];
 
