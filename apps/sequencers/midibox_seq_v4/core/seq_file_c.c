@@ -387,7 +387,7 @@ s32 SEQ_FILE_C_Read(char *session)
 	      }
 	    }
 	  } else if( strcmp(parameter, "RecGrid") == 0 ) {
-	    s32 value = get_dec_range(word, parameter, 0, 7);
+	    s32 value = get_dec_range(word, parameter, 0, 8);
 	    if( value >= 0 )
 	      seq_record_grid = value;
 	  } else if( strcmp(parameter, "RecStepInc") == 0 ) {

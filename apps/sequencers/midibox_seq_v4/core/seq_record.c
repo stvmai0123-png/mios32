@@ -75,7 +75,7 @@ static u8 seq_record_grid_note[SEQ_CORE_NUM_TRACKS];
 static u8 seq_record_grid_note_layer[SEQ_CORE_NUM_TRACKS];
 static u8 seq_record_grid_note_step[SEQ_CORE_NUM_TRACKS];
 
-static const u8 seq_record_grid_interval[8] = { 96, 48, 32, 16, 8, 4, 2, 1 };
+static const u8 seq_record_grid_interval[9] = { 96, 48, 32, 24, 16, 12, 8, 4, 1 };
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -762,7 +762,7 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 	  if( step_offset > step_length )
 	    step_offset = step_length;
 
-	  u8 grid = seq_record_grid > 7 ? 7 : seq_record_grid;
+	  u8 grid = seq_record_grid > 8 ? 8 : seq_record_grid;
 	  u32 interval = (step_length * seq_record_grid_interval[grid] + 48) / 96;
 	  if( !interval )
 	    interval = 1;

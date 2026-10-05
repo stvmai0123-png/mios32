@@ -92,7 +92,7 @@
 
 #define NUM_OF_ITEMS           26
 
-static const u8 live_grid_positions[8] = { 1, 2, 3, 6, 12, 24, 48, 96 };
+static const u8 live_grid_positions[9] = { 1, 2, 3, 4, 6, 8, 12, 24, 96 };
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -643,7 +643,7 @@ static s32 Encoder_Handler(seq_ui_encoder_t encoder, s32 incrementer)
   case ITEM_LIVE_QUANTIZE: {
     s32 status;
     if( SEQ_RECORD_QuantizeModeGet(SEQ_UI_VisibleTrackGet()) == SEQ_RECORD_QUANTIZE_MODE_Grid )
-      status = SEQ_UI_Var8_Inc(&seq_record_grid, 0, 7, incrementer);
+      status = SEQ_UI_Var8_Inc(&seq_record_grid, 0, 8, incrementer);
     else
       status = SEQ_UI_Var8_Inc(&seq_record_quantize, 0, 99, incrementer);
     if( status >= 0 ) {
@@ -1103,7 +1103,7 @@ static s32 LCD_Handler(u8 high_prio)
     if( ui_selected_item == ITEM_LIVE_QUANTIZE && ui_cursor_flash ) {
       SEQ_LCD_PrintSpaces(4);
     } else if( quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid ) {
-      u8 grid = seq_record_grid > 7 ? 7 : seq_record_grid;
+      u8 grid = seq_record_grid > 8 ? 8 : seq_record_grid;
       SEQ_LCD_PrintFormattedString("%3d ", live_grid_positions[grid]);
     } else {
       SEQ_LCD_PrintFormattedString("%3d%%", seq_record_quantize);
