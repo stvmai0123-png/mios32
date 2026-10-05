@@ -563,10 +563,6 @@ s32 SEQ_RECORD_Receive(mios32_midi_package_t midi_package, u8 track)
 	      seq_record_grid_note_active[track] = 0;
 	    }
 	    grid_note_off_recorded = 1;
-	  } else if( !step_record_mode &&
-		     quantize_mode == SEQ_RECORD_QUANTIZE_MODE_Grid &&
-		     tcc->event_mode == SEQ_EVENT_MODE_Drum ) {
-	    grid_note_off_recorded = 1;
 	  } else {
 	    len = SEQ_BPM_TickGet() - t->rec_timestamp;
 
