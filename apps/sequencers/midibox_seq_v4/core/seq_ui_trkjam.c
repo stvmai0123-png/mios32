@@ -92,7 +92,7 @@
 
 #define NUM_OF_ITEMS           26
 
-static const u8 live_grid_positions[8] = { 96, 48, 24, 12, 6, 3, 2, 1 };
+static const u8 live_grid_positions[8] = { 1, 2, 3, 6, 12, 24, 48, 96 };
 
 
 /////////////////////////////////////////////////////////////////////////////

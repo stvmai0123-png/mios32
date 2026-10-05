@@ -75,7 +75,7 @@ static u8 seq_record_grid_note[SEQ_CORE_NUM_TRACKS];
 static u8 seq_record_grid_note_layer[SEQ_CORE_NUM_TRACKS];
 static u8 seq_record_grid_note_step[SEQ_CORE_NUM_TRACKS];
 
-static const u8 seq_record_grid_interval[8] = { 1, 2, 4, 8, 16, 32, 48, 96 };
+static const u8 seq_record_grid_interval[8] = { 96, 48, 32, 16, 8, 4, 2, 1 };
 
 
 /////////////////////////////////////////////////////////////////////////////
